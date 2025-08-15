@@ -318,3 +318,90 @@
     })
   )
 )
+
+(define-read-only (verify-vault-integrity
+    (vault-id uint)
+    (expected-owner principal)
+  )
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (actual-owner (get owner vault-data))
+      (creation-time (get created-at vault-data))
+      (user-authorized (default-to false
+        (get has-access
+          (map-get? access-control-matrix {
+            vault-id: vault-id,
+            user: tx-sender,
+          })
+        )))
+    )
+    ;; Access verification
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts!
+      (or
+        (is-eq tx-sender actual-owner)
+        user-authorized
+        (is-eq tx-sender system-admin)
+      )
+      err-access-denied
+    )
+
+    ;; Perform integrity check
+    (if (is-eq actual-owner expected-owner)
+      ;; Positive integrity report
+      (ok {
+        integrity-verified: true,
+        current-block: stacks-block-height,
+        vault-lifetime: (- stacks-block-height creation-time),
+        ownership-confirmed: true,
+      })
+      ;; Integrity mismatch report
+      (ok {
+        integrity-verified: false,
+        current-block: stacks-block-height,
+        vault-lifetime: (- stacks-block-height creation-time),
+        ownership-confirmed: false,
+      })
+    )
+  )
+)
+
+(define-read-only (system-health-check)
+  (begin
+    ;; Admin privilege required
+    (asserts! (is-eq tx-sender system-admin) err-unauthorized)
+
+    ;; System status report
+    (ok {
+      total-vaults: (var-get vault-sequence),
+      system-online: true,
+      current-block: stacks-block-height,
+    })
+  )
+)
+
+(define-read-only (get-vault-info (vault-id uint))
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Access permission check
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts!
+      (or
+        (is-eq tx-sender (get owner vault-data))
+        (default-to false
+          (get has-access
+            (map-get? access-control-matrix {
+              vault-id: vault-id,
+              user: tx-sender,
+            })
+          ))
+        (is-eq tx-sender system-admin)
+      )
+      err-access-denied
+    )
+
+    ;; Return vault information
+    (ok vault-data)
+  )
+)
