@@ -193,3 +193,128 @@
     (ok true)
   )
 )
+
+(define-public (quarantine-vault (vault-id uint))
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (quarantine-tag "QUARANTINED")
+      (current-tags (get tags vault-data))
+    )
+    ;; Admin authorization
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts!
+      (or
+        (is-eq tx-sender system-admin)
+        (is-eq (get owner vault-data) tx-sender)
+      )
+      err-unauthorized
+    )
+
+    ;; Apply quarantine status
+    (map-set vault-registry { vault-id: vault-id }
+      (merge vault-data { tags: (unwrap! (as-max-len? (append current-tags quarantine-tag) u10)
+        err-invalid-tags
+      ) }
+      ))
+    (ok true)
+  )
+)
+
+(define-public (destroy-vault (vault-id uint))
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Ownership verification
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Permanently remove vault
+    (map-delete vault-registry { vault-id: vault-id })
+    (ok true)
+  )
+)
+
+(define-public (add-classification-tags
+    (vault-id uint)
+    (additional-tags (list 10 (string-ascii 32)))
+  )
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (existing-tags (get tags vault-data))
+      (combined-tags (unwrap! (as-max-len? (concat existing-tags additional-tags) u10)
+        err-invalid-tags
+      ))
+    )
+    ;; Ownership verification
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Validate new tags
+    (asserts! (validate-tag-structure additional-tags) err-invalid-tags)
+
+    ;; Apply tag expansion
+    (map-set vault-registry { vault-id: vault-id }
+      (merge vault-data { tags: combined-tags })
+    )
+    (ok combined-tags)
+  )
+)
+
+(define-public (archive-vault (vault-id uint))
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (archive-tag "ARCHIVED")
+      (existing-tags (get tags vault-data))
+      (archived-tags (unwrap! (as-max-len? (append existing-tags archive-tag) u10)
+        err-invalid-tags
+      ))
+    )
+    ;; Ownership authorization
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Apply archive status
+    (map-set vault-registry { vault-id: vault-id }
+      (merge vault-data { tags: archived-tags })
+    )
+    (ok true)
+  )
+)
+
+;; read only functions
+(define-read-only (get-vault-analytics (vault-id uint))
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (creation-time (get created-at vault-data))
+    )
+    ;; Access permission check
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts!
+      (or
+        (is-eq tx-sender (get owner vault-data))
+        (default-to false
+          (get has-access
+            (map-get? access-control-matrix {
+              vault-id: vault-id,
+              user: tx-sender,
+            })
+          ))
+        (is-eq tx-sender system-admin)
+      )
+      err-access-denied
+    )
+
+    ;; Generate analytics report
+    (ok {
+      vault-age: (- stacks-block-height creation-time),
+      storage-usage: (get size-bytes vault-data),
+      tag-count: (len (get tags vault-data)),
+    })
+  )
+)
