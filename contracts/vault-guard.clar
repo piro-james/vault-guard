@@ -405,3 +405,61 @@
     (ok vault-data)
   )
 )
+
+(define-read-only (check-user-access
+    (vault-id uint)
+    (user principal)
+  )
+  (let (
+      (vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id })
+        err-vault-not-found
+      ))
+      (access-record (map-get? access-control-matrix {
+        vault-id: vault-id,
+        user: user,
+      }))
+    )
+    ;; Only owner or admin can check access
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts!
+      (or
+        (is-eq tx-sender (get owner vault-data))
+        (is-eq tx-sender system-admin)
+      )
+      err-access-denied
+    )
+
+    ;; Return access status
+    (ok (default-to false (get has-access access-record)))
+  )
+)
+
+(define-read-only (get-vault-count)
+  (ok (var-get vault-sequence))
+)
+
+;; private functions
+(define-private (vault-exists (vault-id uint))
+  (is-some (map-get? vault-registry { vault-id: vault-id }))
+)
+
+(define-private (valid-tag (tag (string-ascii 32)))
+  (and
+    (> (len tag) u0)
+    (< (len tag) u33)
+  )
+)
+
+(define-private (validate-tag-structure (tags (list 10 (string-ascii 32))))
+  (and
+    (> (len tags) u0)
+    (<= (len tags) u10)
+    (is-eq (len (filter valid-tag tags)) (len tags))
+  )
+)
+
+(define-private (get-vault-size (vault-id uint))
+  (default-to u0
+    (get size-bytes (map-get? vault-registry { vault-id: vault-id }))
+  )
+)
