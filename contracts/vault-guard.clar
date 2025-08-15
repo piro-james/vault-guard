@@ -91,3 +91,105 @@
     (ok vault-id)
   )
 )
+
+(define-public (update-vault-metadata
+    (vault-id uint)
+    (new-name (string-ascii 64))
+    (new-size uint)
+    (new-description (string-ascii 128))
+    (new-tags (list 10 (string-ascii 32)))
+  )
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Authority verification
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Input validation
+    (asserts! (> (len new-name) u0) err-invalid-name)
+    (asserts! (< (len new-name) u65) err-invalid-name)
+    (asserts! (> new-size u0) err-invalid-size)
+    (asserts! (< new-size u1000000000) err-invalid-size)
+    (asserts! (> (len new-description) u0) err-invalid-name)
+    (asserts! (< (len new-description) u129) err-invalid-name)
+    (asserts! (validate-tag-structure new-tags) err-invalid-tags)
+
+    ;; Apply metadata updates
+    (map-set vault-registry { vault-id: vault-id }
+      (merge vault-data {
+        asset-name: new-name,
+        size-bytes: new-size,
+        description: new-description,
+        tags: new-tags,
+      })
+    )
+    (ok true)
+  )
+)
+
+(define-public (authorize-user
+    (vault-id uint)
+    (user principal)
+  )
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Input validation
+    (asserts! (not (is-eq user tx-sender)) err-unauthorized)
+
+    ;; Ownership verification
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Grant access permission
+    (map-set access-control-matrix {
+      vault-id: vault-id,
+      user: user,
+    } { has-access: true }
+    )
+    (ok true)
+  )
+)
+
+(define-public (revoke-user-access
+    (vault-id uint)
+    (user principal)
+  )
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Authorization checks
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+    (asserts! (not (is-eq user tx-sender)) err-unauthorized)
+
+    ;; Remove access rights
+    (map-delete access-control-matrix {
+      vault-id: vault-id,
+      user: user,
+    })
+    (ok true)
+  )
+)
+
+(define-public (transfer-ownership
+    (vault-id uint)
+    (new-owner principal)
+  )
+  (let ((vault-data (unwrap! (map-get? vault-registry { vault-id: vault-id }) err-vault-not-found)))
+    ;; Input validation
+    (asserts! (not (is-eq new-owner tx-sender)) err-unauthorized)
+
+    ;; Ownership validation
+    (asserts! (vault-exists vault-id) err-vault-not-found)
+    (asserts! (is-eq (get owner vault-data) tx-sender) err-ownership-mismatch)
+
+    ;; Transfer ownership
+    (map-set vault-registry { vault-id: vault-id }
+      (merge vault-data { owner: new-owner })
+    )
+
+    ;; Grant new owner access
+    (map-set access-control-matrix {
+      vault-id: vault-id,
+      user: new-owner,
+    } { has-access: true }
+    )
+    (ok true)
+  )
+)
